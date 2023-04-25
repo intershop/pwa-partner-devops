@@ -176,6 +176,9 @@ jobs:
           # If no PREDEFINED_TAG is set, check if the source branch is a tag and use it as tag
           elif [[ $(Build.SourceBranch) =~ tags/(.*) ]]; then
             DEFINED_TAG="${BASH_REMATCH[1]}"
+            # Pattern to remove invalid characters
+            pattern="[^a-zA-Z0-9_\.\\-]"
+            DEFINED_TAG=$(echo "${DEFINED_TAG}" | sed "s/$pattern//g")
           # If neither a PREDEFINED_TAG is set nor it is a tagged build, use the build id as tag
           else
             DEFINED_TAG="$(build.buildId)"
