@@ -19,6 +19,8 @@ trigger:
 # Create a repository resource to the Github repo, that is providing the centrally managed CI job
 resources:
   repositories:
+    # CI build pipeline repository
+    # See: https://github.com/intershop/pwa-partner-devops
     - repository: pwa-partner-devops
       type: github
       endpoint: INTERSHOP_GITHUB
