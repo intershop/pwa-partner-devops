@@ -47,6 +47,7 @@ After that, in Azure DevOps a new pipeline has to be created from this file.
 | lockImages | Specify whether an image built based on a Git tag should be locked in the Azure container registry. | true | Yes |
 | jobTimeoutInMinutes | Specifies the maximum job execution time in minutes. | 300 | Yes |
 | jobContinueOnError | Specifies whether future jobs should run even if this job fails | false | Yes |
+| retagExistingImages | Specify whether to attempt to retag the image instead of rebuilding it. When enabled, it will search for already built images based on the commit ID and re-tag them. | false |  |
 
 ## Important information:
 

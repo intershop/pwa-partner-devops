@@ -80,6 +80,11 @@ parameters:
   type: boolean
   default: false
 
+  # Enable this to retag builded Docker images for tags instead of rebuilding them.
+- name: retagExistingImages
+  type: boolean
+  default: false
+
 jobs:
 - job: CI${{ parameters.id }}
   pool: '${{ parameters.agentPool }}'
@@ -87,11 +92,6 @@ jobs:
   condition: ${{ parameters.condition }}
   continueOnError: ${{ parameters.jobContinueOnError }}
   timeoutInMinutes: ${{ parameters.jobTimeoutInMinutes }}
-  variables:
-    - name: YQ_VERSION
-      value: v4.33.3
-    - name: YQ_BINARY
-      value: yq_linux_amd64
   workspace:
     clean: all
   steps:
@@ -148,23 +148,8 @@ jobs:
               predefinedImageTag:             ${{ parameters.predefinedImageTag }}
               predefinedImageName:            ${{ parameters.predefinedImageName }}
               lockImages:                     ${{ parameters.lockImages }}
+              retagExistingImages:            ${{ parameters.retagExistingImages }}
           EOF
-
-    # Install YQ
-    - task: Bash@3
-      displayName: 'Install yq'
-      env:
-        VERSION: $(YQ_VERSION)
-        BINARY: $(YQ_BINARY)
-      timeoutInMinutes: 2
-      inputs:
-        targetType: 'inline'
-        script: |
-          #!/bin/bash
-          set -e
-
-          sudo wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY} -O /usr/bin/yq
-          sudo chmod +x /usr/bin/yq
 
     # Generate the Docker image tag that should be used in this build.
     - task: Bash@3
@@ -243,17 +228,163 @@ jobs:
           echo "##vso[task.setvariable variable=imageNameNginx]${DEFINED_IMAGE_NAME_NGINIX}"
           echo "DEFINED_IMAGE_NAME_NGINIX = ${DEFINED_IMAGE_NAME_NGINIX}"
 
-    #
-    # SSR-Container
-    #
     - task: Docker@2
-      displayName: SSR Docker login
+      displayName: Docker login
       inputs:
         command: login
         containerRegistry: $(REPO_SERVICE_CONNECTION)
 
+    - task: AzureCLI@2
+      timeoutInMinutes: 5
+      condition: and(succeeded(), eq('${{ parameters.retagExistingImages }}', true), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+      displayName: "Retag existing Images"
+      env:
+        IMAGE_ARTIFACT_FILE_PATH: $(Agent.TempDirectory)/image/imageProperties.yaml
+        REGISTRY: ${{ parameters.registry }}
+      inputs:
+        azureSubscription: '$(REPO_SERVICE_CONNECTION_ARM)'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+
+          #!/bin/bash
+
+          # This script pulls a Docker image from a registry, renames/retags it with a target version and pushes it back to the same registry.
+
+          # Log in to Azure DevOps
+          echo "$(System.AccessToken)" | az devops login --organization "$(System.CollectionUri)"
+
+          # Get the last successful build ID for this commit
+          LAST_SUCCESS_BUILD_ID=$(az pipelines runs list \
+            --org $(System.CollectionUri) \
+            --project $(System.TeamProjectId) \
+            --pipeline-ids $(System.DefinitionId) \
+            --query-order FinishTimeDesc \
+            --result succeeded \
+            --status completed \
+            --query "[?sourceVersion=='$(Build.SourceVersion)'].id | [0]" -o tsv
+          )
+
+          echo "LAST_SUCCESS_BUILD_ID: ${LAST_SUCCESS_BUILD_ID}"
+
+          # Check if the variable is empty
+          if [[ -z "${LAST_SUCCESS_BUILD_ID}" ]]; then
+            echo "The variable LAST_SUCCESS_BUILD_ID is empty."
+            exit 0
+          fi
+
+          # Find the download URL of the artifact
+          ARTIFACT_DOWNLOAD_URL=$(az pipelines runs artifact list \
+            --run-id "${LAST_SUCCESS_BUILD_ID}" \
+            --org "$(System.CollectionUri)" \
+            --project "$(System.TeamProjectId)" \
+            --query "[?name=='image_artifacts'].resource.downloadUrl" -o tsv)
+
+          echo "ARTIFACT_DOWNLOAD_URL: ${ARTIFACT_DOWNLOAD_URL}"
+
+          # Check if the variable is empty
+          if [[ -z "${ARTIFACT_DOWNLOAD_URL}" ]]; then
+            echo "The variable ARTIFACT_DOWNLOAD_URL is empty."
+            exit 0
+          fi
+
+          curl \
+            -o $(Agent.TempDirectory)/artifact.zip \
+            -L "${ARTIFACT_DOWNLOAD_URL}" \
+            -H "Authorization: Bearer $(System.AccessToken)"
+          
+          unzip -q $(Agent.TempDirectory)/artifact.zip -d $(Agent.TempDirectory)
+
+          # Check if the image artifact file exists
+          if [[ ! -f "${IMAGE_ARTIFACT_FILE_PATH}" ]]; then
+            echo "File: ${IMAGE_ARTIFACT_FILE_PATH} not exists."
+            exit 0
+          fi
+
+          IMAGE_TAG_SSR=$(yq '.images[] | select(.type == "ssr") | .tag // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+          IMAGE_DIGEST_SSR=$(yq '.images[] | select(.type == "ssr") | .digest // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+          IMAGE_NAME_SSR=$(yq '.images[] | select(.type == "ssr") | .name // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+          IMAGE_REGISTRY_SSR=$(yq '.images[] | select(.type == "ssr") | .registry // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+
+          IMAGE_TAG_NGINX=$(yq '.images[] | select(.type == "nginx") | .tag // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+          IMAGE_DIGEST_NGINX=$(yq '.images[] | select(.type == "nginx") | .digest // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+          IMAGE_NAME_NGINX=$(yq '.images[] | select(.type == "nginx") | .name // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+          IMAGE_REGISTRY_NGINX=$(yq '.images[] | select(.type == "nginx") | .registry // ""' ${IMAGE_ARTIFACT_FILE_PATH})
+
+          # Check if IMAGE_TAG, IMAGE_DIGEST, IMAGE_NAME or IMAGE_REGISTRY are empty or null
+          if [[ -z "${IMAGE_TAG_SSR}" || -z "${IMAGE_DIGEST_SSR}" || -z "${IMAGE_NAME_SSR}" || -z "${IMAGE_REGISTRY_SSR}" ]]; then
+            echo "##[error] Invalid image mapping. IMAGE_TAG_SSR, IMAGE_DIGEST_SSR, IMAGE_NAME_SSR or IMAGE_REGISTRY_SSR is empty or null."
+            exit 0
+          fi
+          if [[ -z "${IMAGE_TAG_NGINX}" || -z "${IMAGE_DIGEST_NGINX}" || -z "${IMAGE_NAME_NGINX}" || -z "${IMAGE_REGISTRY_NGINX}" ]]; then
+            echo "##[error] Invalid image mapping. IMAGE_TAG_NGINX, IMAGE_DIGEST_NGINX, IMAGE_NAME_NGINX or IMAGE_REGISTRY_NGINX is empty or null."
+            exit 0
+          fi
+
+          # Check if the image registry matches the expected registry
+          if [[ "${IMAGE_REGISTRY_SSR}" != "${REGISTRY}" || "${IMAGE_REGISTRY_NGINX}" != "${REGISTRY}" ]]; then
+            echo "The strings REGISTRY and IMAGE_REGISTRY_SSR|IMAGE_REGISTRY_NGINX are not equal."
+            exit 0
+          fi
+
+          # Get the image digest from the Azure Container Registry
+          ACR_IMAGE_DIGEST_SSR=$(az acr repository show \
+            -n "${IMAGE_REGISTRY_SSR}" \
+            --image "${IMAGE_NAME_SSR}@${IMAGE_DIGEST_SSR}" \
+            --query "digest" \
+            -o tsv)
+
+          echo "ACR_IMAGE_DIGEST_SSR: ${ACR_IMAGE_DIGEST_SSR}"
+
+          ACR_IMAGE_DIGEST_NGINX=$(az acr repository show \
+            -n "${IMAGE_REGISTRY_NGINX}" \
+            --image "${IMAGE_NAME_NGINX}@${IMAGE_DIGEST_NGINX}" \
+            --query "digest" \
+            -o tsv)
+
+          echo "ACR_IMAGE_DIGEST_NGINX: ${ACR_IMAGE_DIGEST_NGINX}"
+
+          # Check if the variable is empty
+          if [[ -z "${ACR_IMAGE_DIGEST_SSR}" || -z "${ACR_IMAGE_DIGEST_NGINX}" ]]; then
+            echo "The variable ACR_IMAGE_DIGEST_SSR|ACR_IMAGE_DIGEST_NGINX is empty."
+            exit 0
+          fi
+
+          # Check if the image digest matches the expected digest
+          if [[ "${ACR_IMAGE_DIGEST_SSR}" != "${IMAGE_DIGEST_SSR}" || "${ACR_IMAGE_DIGEST_NGINX}" != "${IMAGE_DIGEST_NGINX}" ]]; then
+            echo "The strings ACR_IMAGE_DIGEST_SSR|ACR_IMAGE_DIGEST_NGINX and IMAGE_DIGEST_SSR|IMAGE_DIGEST_NGINX are not equal."
+            exit 0
+          fi
+
+          # Change to the project directory
+          cd "${{ parameters.projectPath }}"
+
+          # Pull the Docker image
+          docker pull "${IMAGE_REGISTRY_SSR}/${IMAGE_NAME_SSR}@${IMAGE_DIGEST_SSR}" || exit 0
+          docker pull "${IMAGE_REGISTRY_NGINX}/${IMAGE_NAME_NGINX}@${IMAGE_DIGEST_NGINX}" || exit 0
+
+          # Echo the pull success message
+          echo "Docker image '${IMAGE_REGISTRY_SSR}/${IMAGE_NAME_SSR}@${IMAGE_DIGEST_SSR}' was successfully pulled."
+          echo "Docker image '${IMAGE_REGISTRY_NGINX}/${IMAGE_NAME_NGINX}@${IMAGE_DIGEST_NGINX}' was successfully pulled."
+
+          # Rename and push the Docker image
+          docker tag "${IMAGE_REGISTRY_SSR}/${IMAGE_NAME_SSR}@${IMAGE_DIGEST_SSR}" "${REGISTRY}/$(imageNameSSR):$(tag)" || exit 0
+          docker tag "${IMAGE_REGISTRY_NGINX}/${IMAGE_NAME_NGINX}@${IMAGE_DIGEST_NGINX}" "${REGISTRY}/$(imageNameNginx):$(tag)" || exit 0
+
+          docker push "${REGISTRY}/$(imageNameSSR):$(tag)" || exit 0
+          docker push "${REGISTRY}/$(imageNameNginx):$(tag)" || exit 0
+
+          # Echo the push success message
+          echo "Docker image was successfully pushed to the repository '${REGISTRY}/$(imageNameSSR):$(tag)'."
+          echo "Docker image was successfully pushed to the repository '${REGISTRY}/$(imageNameNginx):$(tag)'."
+
+          echo "##vso[task.setvariable variable=imageRetagged;]true"
+    #
+    # SSR-Container
+    #
     - task: Docker@2
       displayName: SSR Docker build
+      condition: and(succeeded(), ne(variables.imageRetagged, true))
       inputs:
         containerRegistry: $(REPO_SERVICE_CONNECTION)
         repository: '$(imageNameSSR)'
@@ -265,6 +396,7 @@ jobs:
 
     - task: Docker@2
       displayName: SSR Docker push
+      condition: and(succeeded(), ne(variables.imageRetagged, true))
       inputs:
         containerRegistry: '$(REPO_SERVICE_CONNECTION)'
         repository: '$(imageNameSSR)'
@@ -274,14 +406,10 @@ jobs:
     #
     # Nginx Container
     #
-    - task: Docker@2
-      displayName: Nginx Docker login
-      inputs:
-        command: login
-        containerRegistry: $(REPO_SERVICE_CONNECTION)
 
     - task: Docker@2
       displayName: Nginx Docker build
+      condition: and(succeeded(), ne(variables.imageRetagged, true))
       inputs:
         containerRegistry: $(REPO_SERVICE_CONNECTION)
         repository: '$(imageNameNginx)'
@@ -292,6 +420,7 @@ jobs:
 
     - task: Docker@2
       displayName: Nginx Docker push
+      condition: and(succeeded(), ne(variables.imageRetagged, true))
       inputs:
         containerRegistry: '$(REPO_SERVICE_CONNECTION)'
         repository: '$(imageNameNginx)'
@@ -317,40 +446,20 @@ jobs:
           #!/bin/bash
           set -e
 
-          #######################################
-          # The script is checking if the IMAGE_SSR and IMAGE_NGINX environment variables are empty. 
-          # If they are empty, the script exits with an error. 
-          # If they are not empty, the script writes the values of these variables to a temporary file named imageProperties. 
-          # The script also checks if the Docker images exist locally and exits with an error if they don't exist.
-          # Finally, the script prints the contents of the imageProperties file and uploads it as an pipeline artifact. 
-          # It also appends information about the created Docker image to a Markdown file named config<id>.md.
-          #
-          # Arguments:
-          #   None
-          #######################################
-
-          ###############################################################
-          # Script Parameters                                           #
-          ###############################################################
-
-          # Create a temporary folder for storing intermediate files
+          # This script reads the labels of a Docker image and creates an imageProperty file.
 
           # Create a temporary directory with a unique name
           TMP_CUSTOM_DIR=$(mktemp -d -t ci-pwa-XXXXXXXXXX)
           IMAGE_PROPERTIES_FILE="${TMP_CUSTOM_DIR}/imageProperties.yaml"
 
-          ###############################################################
-          # Script                                                      #
-          ###############################################################
-
           # Check if the IMAGE_SSR variable is empty
-          if [ -z "${IMAGE_SSR}" ]; then
+          if [[ -z "${IMAGE_SSR}" ]]; then
               echo "The IMAGE_SSR variable is empty."
               exit 1
           fi
 
           # Check if the IMAGE_NGINX variable is empty
-          if [ -z "${IMAGE_NGINX}" ]; then
+          if [[ -z "${IMAGE_NGINX}" ]]; then
               echo "The IMAGE_NGINX variable is empty."
               exit 1
           fi
@@ -371,6 +480,10 @@ jobs:
             exit 1
           fi
 
+          # Get Image digest
+          IMAGE_DIGIST_SSR=$(docker image inspect --format='{{index .RepoDigests 0}}' "${REGISTRY}/${IMAGE_SSR}:${TAG}" | cut -d'@' -f2)
+          IMAGE_DIGIST_NGINX=$(docker image inspect --format='{{index .RepoDigests 0}}' "${REGISTRY}/${IMAGE_NGINX}:${TAG}" | cut -d'@' -f2)
+
           # Write the ssr and nginx repository name and tag to the imageProperties file
           # Generate YAML file
           cat <<EOF > ${IMAGE_PROPERTIES_FILE}
@@ -378,10 +491,12 @@ jobs:
             - type: ssr
               tag: ${TAG}
               name: ${IMAGE_SSR}
+              digest: ${IMAGE_DIGIST_SSR}
               registry: ${REGISTRY}
             - type: nginx
               tag: ${TAG}
               name: ${IMAGE_NGINX}
+              digest: ${IMAGE_DIGIST_NGINX}
               registry: ${REGISTRY}
           EOF
   
