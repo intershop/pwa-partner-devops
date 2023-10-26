@@ -87,11 +87,6 @@ jobs:
   condition: ${{ parameters.condition }}
   continueOnError: ${{ parameters.jobContinueOnError }}
   timeoutInMinutes: ${{ parameters.jobTimeoutInMinutes }}
-  variables:
-    - name: YQ_VERSION
-      value: v4.33.3
-    - name: YQ_BINARY
-      value: yq_linux_amd64
   workspace:
     clean: all
   steps:
@@ -149,22 +144,6 @@ jobs:
               predefinedImageName:            ${{ parameters.predefinedImageName }}
               lockImages:                     ${{ parameters.lockImages }}
           EOF
-
-    # Install YQ
-    - task: Bash@3
-      displayName: 'Install yq'
-      env:
-        VERSION: $(YQ_VERSION)
-        BINARY: $(YQ_BINARY)
-      timeoutInMinutes: 2
-      inputs:
-        targetType: 'inline'
-        script: |
-          #!/bin/bash
-          set -e
-
-          sudo wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY} -O /usr/bin/yq
-          sudo chmod +x /usr/bin/yq
 
     # Generate the Docker image tag that should be used in this build.
     - task: Bash@3
