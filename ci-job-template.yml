@@ -162,7 +162,7 @@ jobs:
             DEFINED_TAG="${PREDEFINED_TAG}"
           # If no PREDEFINED_TAG is set, check if the source branch is a tag and use it as tag
           elif [[ $(Build.SourceBranch) =~ tags/(.*) ]]; then
-            DEFINED_TAG="${BASH_REMATCH[1]}"
+            DEFINED_TAG="${BASH_REMATCH[1]##*/}"
             # Pattern to remove invalid characters
             # See: https://docs.docker.com/engine/reference/commandline/tag/
             pattern="[^a-zA-Z0-9_\.\\-]"
