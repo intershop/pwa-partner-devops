@@ -87,11 +87,6 @@ jobs:
   condition: ${{ parameters.condition }}
   continueOnError: ${{ parameters.jobContinueOnError }}
   timeoutInMinutes: ${{ parameters.jobTimeoutInMinutes }}
-  variables:
-    - name: YQ_VERSION
-      value: v4.33.3
-    - name: YQ_BINARY
-      value: yq_linux_amd64
   workspace:
     clean: all
   steps:
@@ -150,22 +145,6 @@ jobs:
               lockImages:                     ${{ parameters.lockImages }}
           EOF
 
-    # Install YQ
-    - task: Bash@3
-      displayName: 'Install yq'
-      env:
-        VERSION: $(YQ_VERSION)
-        BINARY: $(YQ_BINARY)
-      timeoutInMinutes: 2
-      inputs:
-        targetType: 'inline'
-        script: |
-          #!/bin/bash
-          set -e
-
-          sudo wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY} -O /usr/bin/yq
-          sudo chmod +x /usr/bin/yq
-
     # Generate the Docker image tag that should be used in this build.
     - task: Bash@3
       name: setvarTag
@@ -183,7 +162,7 @@ jobs:
             DEFINED_TAG="${PREDEFINED_TAG}"
           # If no PREDEFINED_TAG is set, check if the source branch is a tag and use it as tag
           elif [[ $(Build.SourceBranch) =~ tags/(.*) ]]; then
-            DEFINED_TAG="${BASH_REMATCH[1]}"
+            DEFINED_TAG="${BASH_REMATCH[1]##*/}"
             # Pattern to remove invalid characters
             # See: https://docs.docker.com/engine/reference/commandline/tag/
             pattern="[^a-zA-Z0-9_\.\\-]"
