@@ -208,6 +208,9 @@ jobs:
             DEFINED_IMAGE_NAME="${ADO_ORGA_NAME}/$(System.TeamProject)/${BRANCH_NAME}"
           fi
 
+          # Convert DEFINED_IMAGE_NAME to lowercase and remove spaces
+          DEFINED_IMAGE_NAME=$(echo "$DEFINED_IMAGE_NAME" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+
           # Set variable for the image name
           echo "##vso[task.setvariable variable=imageName]${DEFINED_IMAGE_NAME}"
           echo "DEFINED_IMAGE_NAME = ${DEFINED_IMAGE_NAME}"
