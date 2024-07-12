@@ -65,6 +65,21 @@ parameters:
   type: string
   default: 'pwa-nginx'
 
+  # Specifies the path to the Dockerfile for the SSR build.
+- name: ssrDockerfilePath
+  type: string
+  default: 'Dockerfile'
+
+  # Specifies the path to the Dockerfile for the Nginx build.
+- name: nginxDockerfilePath
+  type: string
+  default: 'nginx/Dockerfile'
+
+  # Specifies the build context for the Nginx Docker build.
+- name: nginxBuildContext
+  type: string
+  default: 'nginx'
+
   # Enable immutable images when created for Git tags.
 - name: lockImages
   type: boolean
@@ -142,6 +157,11 @@ jobs:
               jobTimeoutInMinutes:            ${{ parameters.jobTimeoutInMinutes }}
               predefinedImageTag:             ${{ parameters.predefinedImageTag }}
               predefinedImageName:            ${{ parameters.predefinedImageName }}
+              ssrBaseImageName:               ${{ parameters.ssrBaseImageName }}
+              nginxBaseImageName:             ${{ parameters.nginxBaseImageName }}
+              ssrDockerfilePath:              ${{ parameters.ssrDockerfilePath }}
+              nginxDockerfilePath:            ${{ parameters.nginxDockerfilePath }}
+              nginxBuildContext:              ${{ parameters.nginxBuildContext }}
               lockImages:                     ${{ parameters.lockImages }}
           EOF
 
@@ -240,8 +260,8 @@ jobs:
         containerRegistry: $(REPO_SERVICE_CONNECTION)
         repository: '$(imageNameSSR)'
         command: 'build'
-        Dockerfile: '$(system.defaultWorkingDirectory)/Dockerfile'
-        buildContext: '$(system.defaultWorkingDirectory)'
+        Dockerfile: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}/${{ parameters.ssrDockerfilePath }}'
+        buildContext: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}'
         tags: $(tag)
         arguments: '--build-arg displayVersion=$(tag)'
 
@@ -268,8 +288,8 @@ jobs:
         containerRegistry: $(REPO_SERVICE_CONNECTION)
         repository: '$(imageNameNginx)'
         command: 'build'
-        Dockerfile: '$(system.defaultWorkingDirectory)/nginx/Dockerfile'
-        buildContext: '$(system.defaultWorkingDirectory)/nginx'
+        Dockerfile: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}/${{ parameters.nginxDockerfilePath }}'
+        buildContext: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}/${{ parameters.nginxBuildContext }}'
         tags: $(tag)
 
     - task: Docker@2
