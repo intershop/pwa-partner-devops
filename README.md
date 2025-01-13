@@ -49,6 +49,8 @@ After that, in Azure DevOps a new pipeline has to be created from this file.
 | ssrDockerfilePath | Specifies the path to the Dockerfile for the SSR build. | Dockerfile | Yes |
 | nginxDockerfilePath | Specifies the path to the Dockerfile for the Nginx build. | nginx/Dockerfile | Yes |
 | nginxBuildContext | Specifies the build context for the Nginx Docker build. | nginx | Yes |
+| ssrAdditionalBuildArgs | specifies additional build arguments for the SSR Docker build. |  | No |
+| nginxAdditionalBuildArgs | Specifies additional build arguments for the Nginx Docker build. |  | No |
 | lockImages | Specify whether an image built based on a Git tag should be locked in the Azure container registry. | true | Yes |
 | jobTimeoutInMinutes | Specifies the maximum job execution time in minutes. | 300 | Yes |
 | jobContinueOnError | Specifies whether future jobs should run even if this job fails | false | Yes |
