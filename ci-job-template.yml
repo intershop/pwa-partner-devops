@@ -92,6 +92,16 @@ parameters:
   type: string
   default: 'nginx'
 
+  # Specifies additional build arguments for the SSR Docker build.
+- name: ssrAdditionalBuildArgs
+  type: string
+  default: ''
+
+  # Specifies additional build arguments for the Nginx Docker build.
+- name: nginxAdditionalBuildArgs
+  type: string
+  default: ''
+
   # Enable immutable images when created for Git tags.
 - name: lockImages
   type: boolean
@@ -176,6 +186,8 @@ jobs:
               ssrDockerfilePath:              ${{ parameters.ssrDockerfilePath }}
               nginxDockerfilePath:            ${{ parameters.nginxDockerfilePath }}
               nginxBuildContext:              ${{ parameters.nginxBuildContext }}
+              ssrAdditionalBuildArgs:         ${{ parameters.ssrAdditionalBuildArgs }}
+              nginxAdditionalBuildArgs:       ${{ parameters.nginxAdditionalBuildArgs }}
               lockImages:                     ${{ parameters.lockImages }}
           EOF
 
@@ -279,7 +291,7 @@ jobs:
         Dockerfile: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}/${{ parameters.ssrDockerfilePath }}'
         buildContext: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}'
         tags: $(tag)
-        arguments: '--build-arg displayVersion=$(tag)'
+        arguments: '--build-arg displayVersion=$(tag) ${{ parameters.ssrAdditionalBuildArgs }}'
 
     - task: Docker@2
       displayName: SSR Docker push
@@ -307,6 +319,7 @@ jobs:
         Dockerfile: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}/${{ parameters.nginxDockerfilePath }}'
         buildContext: '$(Pipeline.Workspace)/s/${{ parameters.projectPath }}/${{ parameters.nginxBuildContext }}'
         tags: $(tag)
+        arguments: '--build-arg displayVersion=$(tag) ${{ parameters.nginxAdditionalBuildArgs }}'
 
     - task: Docker@2
       displayName: Nginx Docker push
