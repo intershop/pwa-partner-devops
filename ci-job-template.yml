@@ -516,11 +516,11 @@ jobs:
           echo "Checking Build.SourceBranch: $(Build.SourceBranch)"
     
           if [[ "$(Build.SourceBranch)" =~ ^refs/pull/ ]]; then
-              echo "##vso[build.addbuildtag]SourceType:Git-PullRequest"
+              echo "##vso[build.addbuildtag]SourceType_Git-PullRequest"
           elif [[ "$(Build.SourceBranch)" =~ ^refs/tags/ ]]; then
-              echo "##vso[build.addbuildtag]SourceType:Git-Tag"
+              echo "##vso[build.addbuildtag]SourceType_Git-Tag"
           elif [[ "$(Build.SourceBranch)" =~ ^refs/heads/ ]]; then
-              echo "##vso[build.addbuildtag]SourceType:Git-Branch"
+              echo "##vso[build.addbuildtag]SourceType_Git-Branch"
           else
-              echo "##vso[build.addbuildtag]SourceType:Unknown"
+              echo "##vso[build.addbuildtag]SourceType_Unknown"
           fi
