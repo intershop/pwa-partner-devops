@@ -33,6 +33,14 @@ parameters:
   type: string
   default: '$(REPO_SERVICE_CONNECTION)'
 
+  # Name of the ARM service connection to the ACR of the project.
+  # Note: This is not a service connection for Docker.
+  # It is a service connection for the Azure Resource Manager (ARM) 
+  # with access to the Azure Container Registry (ACR) resource.
+- name: registryServiceConnectionArm
+  type: string
+  default: '$(REPO_SERVICE_CONNECTION_ARM)'
+
   # Specifies the repository in Registry/ACR url.
 - name: registry
   type: string
@@ -117,6 +125,16 @@ parameters:
   type: boolean
   default: false
 
+  # Specifies whether to perform a DockerHub login before the build steps.
+- name: dockerhubLogin
+  type: boolean
+  default: false
+
+  # Name of the DockerHub registry service connection to use for login.
+- name: dockerhubServiceConnection
+  type: string
+  default: '$(DOCKERHUB_PUBLIC_SERVICE_CONNECTION)'
+
 jobs:
 - job: CI${{ parameters.id }}
   pool: '${{ parameters.agentPool }}'
@@ -171,6 +189,7 @@ jobs:
           # Parameters
               id:                             ${{ parameters.id }}
               registryServiceConnection:      ${{ parameters.registryServiceConnection }}
+              registryServiceConnectionArm:   ${{ parameters.registryServiceConnectionArm }}
               registry:                       ${{ parameters.registry }}
               agentPool:                      ${{ parameters.agentPool }}
               condition:                      ${{ parameters.condition }}
@@ -189,6 +208,11 @@ jobs:
               ssrAdditionalBuildArgs:         ${{ parameters.ssrAdditionalBuildArgs }}
               nginxAdditionalBuildArgs:       ${{ parameters.nginxAdditionalBuildArgs }}
               lockImages:                     ${{ parameters.lockImages }}
+
+              # Dockerhub
+              dockerhubLogin:                 ${{ parameters.dockerhubLogin }}
+              dockerhubServiceConnection:     ${{ parameters.dockerhubServiceConnection }}
+              
           EOF
 
     # Generate the Docker image tag that should be used in this build.
@@ -273,6 +297,14 @@ jobs:
           echo "##vso[task.setvariable variable=imageNameNginx]${DEFINED_IMAGE_NAME_NGINIX}"
           echo "DEFINED_IMAGE_NAME_NGINIX = ${DEFINED_IMAGE_NAME_NGINIX}"
 
+    # This function performs a dockerhub login operation only if both parameters are either true or non-empty.
+    - task: Docker@2
+      displayName: Docker Login - dockerhubServiceConnection
+      condition: and(succeeded(), ${{ eq(parameters.dockerhubLogin, true) }}, ${{ ne(parameters.dockerhubServiceConnection, '') }})
+      timeoutInMinutes: 1
+      inputs:
+        containerRegistry: ${{ parameters.dockerhubServiceConnection }}
+        command: 'login'
     #
     # SSR-Container
     #
@@ -442,38 +474,37 @@ jobs:
       
     # If the parameter lockImages is true and the Build.SourceBranch is a tag, 
     # then the generated Docker images in the ACR will be made non-overwritable and non-deletable.
-    - ${{ if parameters.lockImages }}:
-      - task: AzureCLI@2
-        timeoutInMinutes: 5
-        condition: and(succeeded(), eq('${{ parameters.lockImages }}', true), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
-        displayName: "Set image attributes"
-        env:
-          TAG: $(tag)
-          IMAGE_NAME_NGINX: $(imageNameNginx)
-          IMAGE_NAME_SSR: $(imageNameSSR)
-          REGISTRY: ${{ parameters.registry }}
-        inputs:
-          azureSubscription: '$(REPO_SERVICE_CONNECTION_ARM)'
-          scriptType: bash
-          scriptLocation: inlineScript
-          inlineScript: |
+    - task: AzureCLI@2
+      timeoutInMinutes: 5
+      condition: and(succeeded(), ${{ eq(parameters.lockImages, true) }}, startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+      displayName: "Set image attributes"
+      env:
+        TAG: $(tag)
+        IMAGE_NAME_NGINX: $(imageNameNginx)
+        IMAGE_NAME_SSR: $(imageNameSSR)
+        REGISTRY: ${{ parameters.registry }}
+      inputs:
+        azureSubscription: '${{ parameters.registryServiceConnectionArm }}'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
 
-            #!/bin/bash
-            set -e
+          #!/bin/bash
+          set -e
 
-            # Update the ssr image
-            az acr repository update \
-              --name "${REGISTRY}" \
-              --image "${IMAGE_NAME_SSR}:${TAG}" \
-              --delete-enabled false \
-              --write-enabled false
-            
-            # Update the nginx image
-            az acr repository update \
-              --name "${REGISTRY}" \
-              --image "${IMAGE_NAME_NGINX}:${TAG}" \
-              --delete-enabled false \
-              --write-enabled false
+          # Update the ssr image
+          az acr repository update \
+            --name "${REGISTRY}" \
+            --image "${IMAGE_NAME_SSR}:${TAG}" \
+            --delete-enabled false \
+            --write-enabled false
+          
+          # Update the nginx image
+          az acr repository update \
+            --name "${REGISTRY}" \
+            --image "${IMAGE_NAME_NGINX}:${TAG}" \
+            --delete-enabled false \
+            --write-enabled false
     
     # Clean up all Docker resources generated by the build.        
     - task: Bash@3
